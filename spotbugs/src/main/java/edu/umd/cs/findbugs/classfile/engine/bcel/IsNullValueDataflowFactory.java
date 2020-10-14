@@ -19,6 +19,7 @@
 
 package edu.umd.cs.findbugs.classfile.engine.bcel;
 
+import org.apache.bcel.generic.ConstantPoolGen;
 import org.apache.bcel.generic.MethodGen;
 
 import edu.umd.cs.findbugs.ba.AssertionMethods;
@@ -63,12 +64,13 @@ public class IsNullValueDataflowFactory extends AnalysisFactory<IsNullValueDataf
             throw new MethodUnprofitableException(descriptor);
         }
         CFG cfg = getCFG(analysisCache, descriptor);
+        ConstantPoolGen cpg = getConstantPoolGen(analysisCache, descriptor.getClassDescriptor());
         ValueNumberDataflow vnaDataflow = getValueNumberDataflow(analysisCache, descriptor);
         DepthFirstSearch dfs = getDepthFirstSearch(analysisCache, descriptor);
         AssertionMethods assertionMethods = getAssertionMethods(analysisCache, descriptor.getClassDescriptor());
         TypeDataflow typeDataflow = getTypeDataflow(analysisCache, descriptor);
 
-        IsNullValueAnalysis invAnalysis = new IsNullValueAnalysis(descriptor, methodGen, cfg, vnaDataflow, typeDataflow, dfs,
+        IsNullValueAnalysis invAnalysis = new IsNullValueAnalysis(descriptor, methodGen, cfg, cpg, vnaDataflow, typeDataflow, dfs,
                 assertionMethods);
 
         // Set return value and parameter databases

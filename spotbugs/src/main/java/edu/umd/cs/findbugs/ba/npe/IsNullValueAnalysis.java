@@ -25,36 +25,11 @@ import java.util.Set;
 
 import javax.annotation.CheckForNull;
 
+import edu.umd.cs.findbugs.ba.*;
 import org.apache.bcel.Const;
-import org.apache.bcel.generic.ALOAD;
-import org.apache.bcel.generic.ATHROW;
-import org.apache.bcel.generic.CodeExceptionGen;
-import org.apache.bcel.generic.IF_ACMPNE;
-import org.apache.bcel.generic.Instruction;
-import org.apache.bcel.generic.InstructionHandle;
-import org.apache.bcel.generic.MethodGen;
-import org.apache.bcel.generic.ObjectType;
-import org.apache.bcel.generic.Type;
+import org.apache.bcel.generic.*;
 
 import edu.umd.cs.findbugs.SystemProperties;
-import edu.umd.cs.findbugs.ba.AnalysisContext;
-import edu.umd.cs.findbugs.ba.AnalysisFeatures;
-import edu.umd.cs.findbugs.ba.AssertionMethods;
-import edu.umd.cs.findbugs.ba.BasicBlock;
-import edu.umd.cs.findbugs.ba.CFG;
-import edu.umd.cs.findbugs.ba.DataflowAnalysisException;
-import edu.umd.cs.findbugs.ba.DepthFirstSearch;
-import edu.umd.cs.findbugs.ba.Edge;
-import edu.umd.cs.findbugs.ba.EdgeTypes;
-import edu.umd.cs.findbugs.ba.FrameDataflowAnalysis;
-import edu.umd.cs.findbugs.ba.INullnessAnnotationDatabase;
-import edu.umd.cs.findbugs.ba.JavaClassAndMethod;
-import edu.umd.cs.findbugs.ba.Location;
-import edu.umd.cs.findbugs.ba.NullnessAnnotation;
-import edu.umd.cs.findbugs.ba.SignatureConverter;
-import edu.umd.cs.findbugs.ba.XFactory;
-import edu.umd.cs.findbugs.ba.XMethod;
-import edu.umd.cs.findbugs.ba.XMethodParameter;
 import edu.umd.cs.findbugs.ba.type.TypeDataflow;
 import edu.umd.cs.findbugs.ba.vna.AvailableLoad;
 import edu.umd.cs.findbugs.ba.vna.ValueNumber;
@@ -88,6 +63,8 @@ public class IsNullValueAnalysis extends FrameDataflowAnalysis<IsNullValue, IsNu
 
     private final CFG cfg;
 
+    private final ConstantPoolGen cpg;
+
     private final Set<LocationWhereValueBecomesNull> locationWhereValueBecomesNullSet;
 
     private final boolean trackValueNumbers;
@@ -96,14 +73,16 @@ public class IsNullValueAnalysis extends FrameDataflowAnalysis<IsNullValue, IsNu
 
     private IsNullValueFrame instanceOfFrame;
 
+    private IsNullValueFrame invokeVirtualFrame;
+
     private IsNullValueFrame cachedEntryFact;
 
     private JavaClassAndMethod classAndMethod;
 
     private final @CheckForNull PointerEqualityCheck pointerEqualityCheck;
 
-    public IsNullValueAnalysis(MethodDescriptor descriptor, MethodGen methodGen, CFG cfg, ValueNumberDataflow vnaDataflow,
-            TypeDataflow typeDataflow, DepthFirstSearch dfs, AssertionMethods assertionMethods) {
+    public IsNullValueAnalysis(MethodDescriptor descriptor, MethodGen methodGen, CFG cfg, ConstantPoolGen cpg, ValueNumberDataflow vnaDataflow,
+                               TypeDataflow typeDataflow, DepthFirstSearch dfs, AssertionMethods assertionMethods) {
         super(dfs);
 
         this.trackValueNumbers = AnalysisContext.currentAnalysisContext().getBoolProperty(
@@ -114,6 +93,7 @@ public class IsNullValueAnalysis extends FrameDataflowAnalysis<IsNullValue, IsNu
                 typeDataflow, trackValueNumbers);
         this.vnaDataflow = vnaDataflow;
         this.cfg = cfg;
+        this.cpg = cpg;
         this.locationWhereValueBecomesNullSet = new HashSet<>();
         this.pointerEqualityCheck = getForPointerEqualityCheck(cfg, vnaDataflow);
 
@@ -293,6 +273,7 @@ public class IsNullValueAnalysis extends FrameDataflowAnalysis<IsNullValue, IsNu
     public void startTransfer() {
         lastFrame = null;
         instanceOfFrame = null;
+        invokeVirtualFrame = null;
     }
 
     public void endTransfer(BasicBlock basicBlock, @CheckForNull InstructionHandle end, IsNullValueFrame result)
@@ -308,6 +289,7 @@ public class IsNullValueAnalysis extends FrameDataflowAnalysis<IsNullValue, IsNu
         }
         lastFrame = null;
         instanceOfFrame = null;
+        invokeVirtualFrame = null;
     }
 
     @Override
@@ -328,6 +310,11 @@ public class IsNullValueAnalysis extends FrameDataflowAnalysis<IsNullValue, IsNu
         if (handle.getInstruction().getOpcode() == Const.INSTANCEOF) {
             instanceOfFrame = createFact();
             instanceOfFrame.copyFrom(fact);
+        }
+
+        if (handle.getInstruction().getOpcode() == Const.INVOKEVIRTUAL) {
+            invokeVirtualFrame = createFact();
+            invokeVirtualFrame.copyFrom(fact);
         }
 
         // Model the instruction
@@ -666,40 +653,81 @@ public class IsNullValueAnalysis extends FrameDataflowAnalysis<IsNullValue, IsNu
             short secondToLastOpcode = prev.getInstruction().getOpcode();
             // System.out.println("Second last opcode: " +
             // Const.Const.getOpcodeName(secondToLastOpcode));
-            if (secondToLastOpcode != Const.INSTANCEOF) {
-                return null;
-            }
-            if (instanceOfFrame == null) {
-                return null;
-            }
-            IsNullValue tos = instanceOfFrame.getTopValue();
-            boolean isNotInstanceOf = (lastInSourceOpcode != Const.IFNE);
-            Location atInstanceOf = new Location(prev, basicBlock);
-            ValueNumberFrame instanceOfVnaFrame = vnaDataflow.getFactAtLocation(atInstanceOf);
 
-            // Initially, assume neither branch is feasible.
-            IsNullValue ifcmpDecision = null;
-            IsNullValue fallThroughDecision = null;
-
-            if (tos.isDefinitelyNull()) {
-                // Predetermined comparison - one branch is infeasible
-                if (isNotInstanceOf) {
-                    ifcmpDecision = tos;
-                } else {
-                    // ifnonnull
-                    fallThroughDecision = tos;
+            if (secondToLastOpcode == Const.INSTANCEOF) {
+                if (instanceOfFrame == null) {
+                    return null;
                 }
-            } else if (tos.isDefinitelyNotNull()) {
+                IsNullValue tos = instanceOfFrame.getTopValue();
+                boolean isNotInstanceOf = (lastInSourceOpcode != Const.IFNE);
+                Location atInstanceOf = new Location(prev, basicBlock);
+                ValueNumberFrame instanceOfVnaFrame = vnaDataflow.getFactAtLocation(atInstanceOf);
+
+                // Initially, assume neither branch is feasible.
+                IsNullValue ifcmpDecision = null;
+                IsNullValue fallThroughDecision = null;
+
+                if (tos.isDefinitelyNull()) {
+                    // Predetermined comparison - one branch is infeasible
+                    if (isNotInstanceOf) {
+                        ifcmpDecision = tos;
+                    } else {
+                        // ifnonnull
+                        fallThroughDecision = tos;
+                    }
+                } else if (tos.isDefinitelyNotNull()) {
+                    return null;
+                } else {
+                    // As far as we know, both branches feasible
+                    ifcmpDecision = isNotInstanceOf ? tos : IsNullValue.pathSensitiveNonNullValue();
+                    fallThroughDecision = isNotInstanceOf ? IsNullValue.pathSensitiveNonNullValue() : tos;
+                }
+                if (DEBUG) {
+                    System.out.println("Checking..." + tos + " -> " + ifcmpDecision + " or " + fallThroughDecision);
+                }
+                return new IsNullConditionDecision(instanceOfVnaFrame.getTopValue(), ifcmpDecision, fallThroughDecision);
+            } else if (secondToLastOpcode == Const.INVOKEVIRTUAL) {
+                InvokeInstruction iins = (InvokeInstruction) prev.getInstruction();
+                SignatureParser signatureParser = new SignatureParser(iins.getSignature(cpg));
+                if (invokeVirtualFrame == null | signatureParser.getNumParameters() == 0) {
+                    return null;
+                }
+                IsNullValue tos = invokeVirtualFrame.getArgument(iins, cpg, 0, signatureParser);
+                boolean isNotInstanceOf = (lastInSourceOpcode != Const.IFNE);
+                Location atInvokeVirtual = new Location(prev, basicBlock);
+                ValueNumberFrame invokeVirtualVnaFrame = vnaDataflow.getFactAtLocation(atInvokeVirtual);
+
+
+                // Initially, assume neither branch is feasible.
+                IsNullValue ifcmpDecision = null;
+                IsNullValue fallThroughDecision = null;
+
+                // TODO: apply NLP
+                if(iins.getMethodName(cpg).equals("isEmpty")) {
+                    if (isNotInstanceOf) {
+                        // ifnull
+                        System.out.println("IFNULL");
+                        ifcmpDecision = tos;
+                        fallThroughDecision = IsNullValue.checkedNonNullValue();
+                    } else {
+                        // ifnonnull
+                        System.out.println("IFNONNULL");
+                        fallThroughDecision = tos;
+                        ifcmpDecision = IsNullValue.checkedNonNullValue();
+                    }
+                }else {
+                    return null;
+                }
+                if (DEBUG) {
+                    System.out.println("Checking..." + tos + " -> " + ifcmpDecision + " or " + fallThroughDecision);
+                }
+                ValueNumber valueNumber = invokeVirtualVnaFrame.getArgument(iins, cpg, 0, signatureParser);
+                return new IsNullConditionDecision(valueNumber, ifcmpDecision, fallThroughDecision);
+
+            } else{
                 return null;
-            } else {
-                // As far as we know, both branches feasible
-                ifcmpDecision = isNotInstanceOf ? tos : IsNullValue.pathSensitiveNonNullValue();
-                fallThroughDecision = isNotInstanceOf ? IsNullValue.pathSensitiveNonNullValue() : tos;
             }
-            if (DEBUG) {
-                System.out.println("Checking..." + tos + " -> " + ifcmpDecision + " or " + fallThroughDecision);
-            }
-            return new IsNullConditionDecision(instanceOfVnaFrame.getTopValue(), ifcmpDecision, fallThroughDecision);
+
         }
 
         if (!nullComparisonInstructionSet.get(lastInSourceOpcode)) {
@@ -836,7 +864,7 @@ public class IsNullValueAnalysis extends FrameDataflowAnalysis<IsNullValue, IsNu
      * @return a modified IsNullValueFrame with updated is-null information
      */
     private IsNullValueFrame replaceValues(IsNullValueFrame origFrame, IsNullValueFrame frame, ValueNumber replaceMe,
-            ValueNumberFrame prevVnaFrame, ValueNumberFrame targetVnaFrame, IsNullValue replacementValue) {
+                                           ValueNumberFrame prevVnaFrame, ValueNumberFrame targetVnaFrame, IsNullValue replacementValue) {
 
         if (!targetVnaFrame.isValid()) {
             throw new IllegalArgumentException("Invalid frame in " + methodGen.getClassName() + "." + methodGen.getName() + " : "

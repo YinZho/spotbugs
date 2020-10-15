@@ -706,14 +706,12 @@ public class IsNullValueAnalysis extends FrameDataflowAnalysis<IsNullValue, IsNu
                 if(iins.getMethodName(cpg).equals("isEmpty")) {
                     if (isNotInstanceOf) {
                         // ifnull
-                        System.out.println("IFNULL");
-                        ifcmpDecision = tos;
-                        fallThroughDecision = IsNullValue.checkedNonNullValue();
+                        ifcmpDecision = IsNullValue.checkedNonNullValue();
+                        fallThroughDecision = tos;
                     } else {
                         // ifnonnull
-                        System.out.println("IFNONNULL");
-                        fallThroughDecision = tos;
-                        ifcmpDecision = IsNullValue.checkedNonNullValue();
+                        fallThroughDecision = IsNullValue.checkedNonNullValue();
+                        ifcmpDecision = tos;
                     }
                 }else {
                     return null;

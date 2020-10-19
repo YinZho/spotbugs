@@ -1424,6 +1424,7 @@ public class FindNullDeref implements Detector, UseAnnotationDatabase, NullDeref
                 bugType = "NP_GUARANTEED_DEREF_ON_EXCEPTION_PATH";
             }
         } else if (!deref.isAlwaysOnExceptionPath()) {
+            System.out.println("Jump here! @@@@@");
             bugType = "NP_NULL_ON_SOME_PATH";
         } else {
             bugType = "NP_NULL_ON_SOME_PATH_EXCEPTION";
